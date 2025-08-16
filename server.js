@@ -2,13 +2,14 @@ const express = require('express');
 require('dotenv').config();
 const cors = require('cors');
 const sequelize = require('./Models/config/databaseconfig');
-const Pacientes = require('./Models/Paciente');
 const authRoutes = require('./Routes/PacienteRoutes');
+const PresionArterialRoutes = require('./Routes/PresionArterialRoutes');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.use('/auth', authRoutes);
+app.use('/pa', PresionArterialRoutes);
 
 sequelize.sync({ alter: true }) 
   .then(() => {
