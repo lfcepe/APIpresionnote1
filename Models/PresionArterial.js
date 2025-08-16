@@ -30,7 +30,7 @@ const PresionArterial = sequelize.define('PresionArterial', {
   id_nivelpresion: { 
     type: DataTypes.INTEGER,
     references: {
-      model: 'catalogos', 
+      model: 'catalogo', 
       key: 'id',
     }
   }

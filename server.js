@@ -1,22 +1,87 @@
+// server.js
 const express = require('express');
 require('dotenv').config();
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
+
 const sequelize = require('./Models/config/databaseconfig');
 const authRoutes = require('./Routes/PacienteRoutes');
-const PresionArterialRoutes = require('./Routes/PresionArterialRoutes');
+const presionArterialRoutes = require('./Routes/PresionArterialRoutes');
+const catalogoRoutes = require('./Routes/CatalogoRoutes');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
-app.use('/auth', authRoutes);
-app.use('/pa', PresionArterialRoutes);
 
-sequelize.sync({ alter: true }) 
-  .then(() => {
-    console.log('Base de datos conectada y las tablas sincronizadas');
+/* ----------------------- Middlewares base ----------------------- */
+app.use(cors({
+  origin: '*', // ajusta a tu dominio/app si quieres restringir
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+app.use(express.json({ limit: '2mb' }));
+
+/* ------------------- Middleware: verificar JWT ------------------- */
+function verifyToken(req, res, next) {
+  try {
+    const header = req.headers['authorization'] || '';
+    const [scheme, token] = header.split(' ');
+    if (scheme !== 'Bearer' || !token) {
+      return res.status(401).json({ error: 'Token no provisto' });
+    }
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // Guardamos el id del usuario para uso en controladores
+    req.userId = decoded.id;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Token inválido o expirado' });
+  }
+}
+
+/* --------------------------- Rutas --------------------------- */
+// Público (registro/login)
+app.use('/auth', authRoutes);
+app.use('/pa', verifyToken, presionArterialRoutes);
+app.use('/catalogo', catalogoRoutes);  
+
+// Salud
+app.get('/health', (req, res) => {
+  res.json({ ok: true, service: 'api', time: new Date().toISOString() });
+});
+
+/* --------------- 404 y manejador de errores --------------- */
+app.use((req, res) => {
+  res.status(404).json({ error: 'Ruta no encontrada' });
+});
+
+app.use((err, req, res, next) => {
+  console.error('Error no controlado:', err);
+  res.status(500).json({ error: 'Error interno del servidor' });
+});
+
+/* -------- Conexión BD y arranque del servidor -------- */
+(async () => {
+  try {
+    await sequelize.authenticate();
+    console.log('Conexión a BD exitosa');
+    await sequelize.sync({ alter: true });
+    console.log('Tablas sincronizadas');
+
     const PORT = process.env.PORT || 3000;
-    app.listen(PORT, () => console.log(`Servidor corriendo en puerto ${PORT}`));
-  })
-  .catch(err => {
+    const server = app.listen(PORT, () =>
+      console.log(`Servidor corriendo en puerto ${PORT}`)
+    );
+
+    // Cierre elegante
+    const shutdown = (signal) => () => {
+      console.log(`\nRecibido ${signal}. Cerrando servidor...`);
+      server.close(() => {
+        console.log('HTTP cerrado.');
+        process.exit(0);
+      });
+    };
+    process.on('SIGINT', shutdown('SIGINT'));
+    process.on('SIGTERM', shutdown('SIGTERM'));
+  } catch (err) {
     console.error('Error al conectar con la base de datos:', err);
-  });
+    process.exit(1);
+  }
+})();
