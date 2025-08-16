@@ -1,5 +1,6 @@
 const { DataTypes } = require('sequelize');
-const sequelize = require('../config/db');
+const sequelize = require('./config/databaseconfig');
+const Catalogo = require('./Catalogo')
 
 const Paciente = sequelize.define('Paciente', {
   nombre: {
@@ -17,10 +18,20 @@ const Paciente = sequelize.define('Paciente', {
   contraseña: {
     type: DataTypes.STRING,
     allowNull: false,
+  },
+  id_estado: { 
+    type: DataTypes.INTEGER,
+    references: {
+      model: 'catalogo', 
+      key: 'id',
+    }
   }
 }, {
-  tableName: 'pacientes',
+  tableName: 'paciente',
   timestamps: false,
 });
+
+Paciente.belongsTo(Catalogo, { foreignKey: 'id_estado' });
+Catalogo.hasMany(Paciente, { foreignKey: 'id_estado' });
 
 module.exports = Paciente;
