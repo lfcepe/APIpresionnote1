@@ -1,19 +1,18 @@
 const express = require('express');
 const router = express.Router();
+const { registrarPaciente, loginPaciente, actualizarPaciente, eliminarPaciente, me } =
+  require('../Controllers/PacienteController');
+const verifyToken = require('../Middlewares/auth');
 
-const {
-  registrarPaciente,
-  loginPaciente,
-  actualizarPaciente,
-  eliminarPaciente,
-} = require('../Controllers/PacienteController');
-
-// Endpoints de auth
+// públicos
 router.post('/register', registrarPaciente);
-router.post('/login',    loginPaciente);
+router.post('/login', loginPaciente);
 
-// Endpoints CRUD (opcionales)
-router.put('/:id',       actualizarPaciente);
-router.delete('/:id',    eliminarPaciente);
+// protegido: perfil del usuario actual
+router.get('/me', verifyToken, me);
+
+// si quieres proteger updates/borrados:
+router.put('/:id', verifyToken, actualizarPaciente);
+router.delete('/:id', verifyToken, eliminarPaciente);
 
 module.exports = router;

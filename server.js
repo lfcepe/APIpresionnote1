@@ -5,6 +5,13 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 
 const sequelize = require('./Models/config/databaseconfig');
+
+// Importa los modelos para que Sequelize los registre
+const Catalogo = require('./Models/Catalogo');
+const Paciente = require('./Models/Paciente');
+const PresionArterial = require('./Models/PresionArterial');
+
+// Rutas
 const authRoutes = require('./Routes/PacienteRoutes');
 const presionArterialRoutes = require('./Routes/PresionArterialRoutes');
 const catalogoRoutes = require('./Routes/CatalogoRoutes');
@@ -39,8 +46,10 @@ function verifyToken(req, res, next) {
 /* --------------------------- Rutas --------------------------- */
 // Público (registro/login)
 app.use('/auth', authRoutes);
+
+// Protegidas por JWT
 app.use('/pa', verifyToken, presionArterialRoutes);
-app.use('/catalogo', catalogoRoutes);  
+app.use('/catalogo', verifyToken, catalogoRoutes);
 
 // Salud
 app.get('/health', (req, res) => {
@@ -62,7 +71,12 @@ app.use((err, req, res, next) => {
   try {
     await sequelize.authenticate();
     console.log('Conexión a BD exitosa');
-    await sequelize.sync({ alter: true });
+
+    // Sincroniza en orden para respetar FKs:
+    // 1) catalogo, 2) paciente (FK a catalogo), 3) presionarterial (FK a catalogo y paciente)
+    await Catalogo.sync();        // tableName: 'catalogo'
+    await Paciente.sync();        // tableName: 'paciente'
+    await PresionArterial.sync(); // tableName: 'presionarterial'
     console.log('Tablas sincronizadas');
 
     const PORT = process.env.PORT || 3000;
