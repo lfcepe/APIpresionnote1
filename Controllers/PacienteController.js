@@ -1,19 +1,27 @@
+// Controllers/PacienteController.js
 const Paciente = require('../Models/Paciente');
+const Catalogo = require('../Models/Catalogo'); // <-- Usamos el modelo Catalogo
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const sequelize = require('../Models/config/databaseconfig');
 
+/* ====================== Helpers ====================== */
+const CATEGORIA_ESTADO_USUARIO = 'ESTADOUSUARIO'; // <-- Ajusta si tu BD usa otro texto
+
+// Obtiene el id del catálogo por categoría y valor (p.ej. 'ESTADOUSUARIO' + 'ACTIVO')
 const getCatalogoId = async (valor) => {
-  const [results] = await sequelize.query(
-    "SELECT id FROM catalogo WHERE valor = :valor LIMIT 1",
-    {
-      replacements: { valor },
-      type: sequelize.QueryTypes.SELECT
-    }
-  );
-  if (!results.length) throw new Error(`Catálogo con valor '${valor}' no encontrado`);
-  return results[0].id;
+  const row = await Catalogo.findOne({
+    where: { categoria: CATEGORIA_ESTADO_USUARIO, valor },
+    attributes: ['id'],
+  });
+  if (!row) {
+    throw new Error(
+      `Catálogo no encontrado: categoria='${CATEGORIA_ESTADO_USUARIO}', valor='${valor}'`
+    );
+  }
+  return row.id;
 };
+
+/* ====================== Controladores ====================== */
 
 const registrarPaciente = async (req, res) => {
   try {
@@ -21,7 +29,6 @@ const registrarPaciente = async (req, res) => {
     const idActivo = await getCatalogoId('ACTIVO');
 
     const existente = await Paciente.findOne({ where: { usuario } });
-
     const hash = await bcrypt.hash(contraseña, 10);
 
     if (existente) {
@@ -29,10 +36,11 @@ const registrarPaciente = async (req, res) => {
         nombre,
         apellido,
         contraseña: hash,
-        id_estado: idActivo
+        id_estado: idActivo,
       });
-
-      return res.status(200).json({ mensaje: 'Paciente actualizado y activado', usuario: existente });
+      return res
+        .status(200)
+        .json({ mensaje: 'Paciente actualizado y activado', usuario: existente });
     }
 
     const nuevoPaciente = await Paciente.create({
@@ -40,7 +48,7 @@ const registrarPaciente = async (req, res) => {
       apellido,
       usuario,
       contraseña: hash,
-      id_estado: idActivo
+      id_estado: idActivo,
     });
 
     res.status(201).json({ mensaje: 'Paciente registrado', usuario: nuevoPaciente });
@@ -55,15 +63,20 @@ const loginPaciente = async (req, res) => {
 
     const idActivo = await getCatalogoId('ACTIVO');
     const paciente = await Paciente.findOne({
-      where: { usuario, id_estado: idActivo } 
+      where: { usuario, id_estado: idActivo },
     });
 
-    if (!paciente) return res.status(404).json({ error: 'Paciente no activo o no registrado' });
+    if (!paciente)
+      return res
+        .status(404)
+        .json({ error: 'Paciente no activo o no registrado' });
 
     const esValido = await bcrypt.compare(contraseña, paciente.contraseña);
     if (!esValido) return res.status(401).json({ error: 'Contraseña incorrecta' });
 
-    const token = jwt.sign({ id: paciente.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const token = jwt.sign({ id: paciente.id }, process.env.JWT_SECRET, {
+      expiresIn: '1h',
+    });
     res.json({ mensaje: 'Login exitoso', token });
   } catch (error) {
     res.status(500).json({ error: 'Error en el login', detalle: error.message });
@@ -93,7 +106,9 @@ const actualizarPaciente = async (req, res) => {
 
     res.json({ mensaje: 'Paciente actualizado correctamente', paciente });
   } catch (error) {
-    res.status(500).json({ error: 'Error al actualizar paciente', detalle: error.message });
+    res
+      .status(500)
+      .json({ error: 'Error al actualizar paciente', detalle: error.message });
   }
 };
 
@@ -113,5 +128,9 @@ const eliminarPaciente = async (req, res) => {
   }
 };
 
-module.exports = { registrarPaciente, loginPaciente, eliminarPaciente, actualizarPaciente };
-
+module.exports = {
+  registrarPaciente,
+  loginPaciente,
+  eliminarPaciente,
+  actualizarPaciente,
+};
