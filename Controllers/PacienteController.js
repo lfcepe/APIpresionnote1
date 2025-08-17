@@ -5,10 +5,11 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const sequelize = require('../Models/config/databaseconfig');
 const { fn, col, Op } = require('sequelize');
+const { issueTokens } = require('../Middleware/auth'); 
 
 const CATEGORIA_ESTADO_USUARIO = 'ESTADOUSUARIO';
 
-/* ------------------ Helpers de normalización ------------------ */
+/* =================== Helpers de normalización =================== */
 function stripAccents(str) {
   return (str || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
@@ -22,10 +23,10 @@ function buildNombreKey4(n1, n2, a1, a2) {
   const raw = `${normalizeSpaces(n1)} ${normalizeSpaces(n2)} ${normalizeSpaces(a1)} ${normalizeSpaces(a2)}`;
   return stripAccents(raw).toUpperCase();
 }
-function fullNombre(n1, n2)      { return normalizeSpaces(`${n1} ${n2}`); }
-function fullApellido(a1, a2)    { return normalizeSpaces(`${a1} ${a2}`); }
+function fullNombre(n1, n2)   { return normalizeSpaces(`${n1} ${n2}`); }
+function fullApellido(a1, a2) { return normalizeSpaces(`${a1} ${a2}`); }
 
-// id catálogo ACTIVO/INACTIVO
+/* ==================== Catálogo ACTIVO / INACTIVO ==================== */
 const getCatalogoId = async (valor) => {
   const row = await Catalogo.findOne({
     where: { categoria: CATEGORIA_ESTADO_USUARIO, valor },
@@ -35,7 +36,7 @@ const getCatalogoId = async (valor) => {
   return row.id;
 };
 
-// Búsqueda case-insensitive por usuario
+/* ============ Búsqueda case-insensitive por usuario ============ */
 const findPacienteByUsuarioCI = async (usuario, t) => {
   const u = (usuario || '').trim().toLowerCase();
   return Paciente.findOne({
@@ -44,9 +45,9 @@ const findPacienteByUsuarioCI = async (usuario, t) => {
   });
 };
 
-/* ------------------------ Endpoints ------------------------ */
+/* ============================= Endpoints ============================= */
 
-// POST /auth/register  — reactiva si coincide usuario o nombre_key INACTIVO
+// POST /auth/register
 const registrarPaciente = async (req, res) => {
   const t = await sequelize.transaction();
   try {
@@ -56,16 +57,15 @@ const registrarPaciente = async (req, res) => {
       usuario, contraseña
     } = req.body;
 
-    // Validar 4 campos obligatorios + usuario/contraseña
     if (![primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, usuario, contraseña].every(requiredNonEmpty)) {
       await t.rollback();
       return res.status(400).json({ error: 'Debe enviar primer_nombre, segundo_nombre, primer_apellido, segundo_apellido, usuario y contraseña.' });
     }
 
-    primer_nombre   = normalizeSpaces(primer_nombre);
-    segundo_nombre  = normalizeSpaces(segundo_nombre);
-    primer_apellido = normalizeSpaces(primer_apellido);
-    segundo_apellido= normalizeSpaces(segundo_apellido);
+    primer_nombre    = normalizeSpaces(primer_nombre);
+    segundo_nombre   = normalizeSpaces(segundo_nombre);
+    primer_apellido  = normalizeSpaces(primer_apellido);
+    segundo_apellido = normalizeSpaces(segundo_apellido);
 
     const nombre_key = buildNombreKey4(primer_nombre, segundo_nombre, primer_apellido, segundo_apellido);
     const nombre     = fullNombre(primer_nombre, segundo_nombre);
@@ -75,7 +75,7 @@ const registrarPaciente = async (req, res) => {
     const idActivo    = await getCatalogoId('ACTIVO');
     const idInactivo  = await getCatalogoId('INACTIVO');
 
-    // 1) ¿Existe por usuario?
+    // 1) Existe por usuario (CI)
     let existente = await findPacienteByUsuarioCI(usuarioTrim, t);
     const hash = await bcrypt.hash(contraseña, 10);
 
@@ -89,11 +89,15 @@ const registrarPaciente = async (req, res) => {
       }, { transaction: t });
 
       await t.commit();
-      const token = jwt.sign({ id: existente.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
-      return res.status(200).json({ mensaje: 'Paciente actualizado y activado', token, usuario: existente });
+      const { accessToken, refreshToken } = issueTokens(existente.id);
+      return res.status(200).json({
+        mensaje: 'Paciente actualizado y activado',
+        accessToken, refreshToken,
+        usuario: existente
+      });
     }
 
-    // 2) ¿Existe INACTIVO por nombre_key?
+    // 2) Inactivo por nombre_key
     const candidatos = await Paciente.findAll({
       where: {
         id_estado: idInactivo,
@@ -105,7 +109,6 @@ const registrarPaciente = async (req, res) => {
     if (candidatos.length === 1) {
       const p = candidatos[0];
 
-      // evita colisión con otro usuario
       const colision = await findPacienteByUsuarioCI(usuarioTrim, t);
       if (colision && colision.id !== p.id) {
         await t.rollback();
@@ -121,8 +124,12 @@ const registrarPaciente = async (req, res) => {
       }, { transaction: t });
 
       await t.commit();
-      const token = jwt.sign({ id: p.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
-      return res.status(200).json({ mensaje: 'Cuenta reactivada', token, usuario: p });
+      const { accessToken, refreshToken } = issueTokens(p.id);
+      return res.status(200).json({
+        mensaje: 'Cuenta reactivada',
+        accessToken, refreshToken,
+        usuario: p
+      });
     }
 
     if (candidatos.length > 1) {
@@ -140,8 +147,12 @@ const registrarPaciente = async (req, res) => {
     }, { transaction: t });
 
     await t.commit();
-    const token = jwt.sign({ id: nuevo.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
-    return res.status(201).json({ mensaje: 'Paciente registrado', token, usuario: nuevo });
+    const { accessToken, refreshToken } = issueTokens(nuevo.id);
+    return res.status(201).json({
+      mensaje: 'Paciente registrado',
+      accessToken, refreshToken,
+      usuario: nuevo
+    });
   } catch (error) {
     await t.rollback();
     if (error?.original?.code === '23505') {
@@ -151,7 +162,7 @@ const registrarPaciente = async (req, res) => {
   }
 };
 
-// POST /auth/login  — valida estado por valor del catálogo
+// POST /auth/login
 const loginPaciente = async (req, res) => {
   try {
     let { usuario, contraseña } = req.body;
@@ -182,10 +193,10 @@ const loginPaciente = async (req, res) => {
       });
     }
 
-    const token = jwt.sign({ id: paciente.id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const { accessToken, refreshToken } = issueTokens(paciente.id);
     res.json({
       mensaje: 'Login exitoso',
-      token,
+      accessToken, refreshToken,
       user: {
         id: paciente.id,
         usuario: paciente.usuario,
@@ -200,7 +211,31 @@ const loginPaciente = async (req, res) => {
   }
 };
 
-// GET /auth/me
+// POST /auth/refresh
+const refresh = async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+    if (!refreshToken) return res.status(400).json({ error: 'Falta refreshToken' });
+
+    // Opcional: en dev puedes loguear payload sin verificar:
+    // console.log('DEBUG decode:', jwt.decode(refreshToken, { complete: true }));
+
+    const payload = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    const tokens = issueTokens(payload.id); // rota ambos
+    return res.json(tokens);
+  } catch (e) {
+    if (e.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Refresh expirado', detalle: `exp=${e.expiredAt}` });
+    }
+    if (e.message?.includes('secret or public key must be provided')) {
+      return res.status(500).json({ error: 'Falta JWT_REFRESH_SECRET en servidor' });
+    }
+    return res.status(401).json({ error: 'Refresh token inválido o expirado' });
+  }
+};
+
+
+// GET /auth/me (protegido)
 const me = async (req, res) => {
   try {
     const p = await Paciente.findByPk(req.userId, {
@@ -217,7 +252,7 @@ const me = async (req, res) => {
   }
 };
 
-// PUT /auth/:id
+// PUT /auth/:id (protegido)
 const actualizarPaciente = async (req, res) => {
   try {
     const { id } = req.params;
@@ -232,7 +267,6 @@ const actualizarPaciente = async (req, res) => {
 
     const updates = {};
 
-    // Si se envía usuario, validar duplicado (CI)
     if (usuario && usuario.trim() !== p.usuario) {
       const dup = await Paciente.findOne({
         where: sequelize.where(fn('LOWER', col('usuario')), usuario.trim().toLowerCase())
@@ -243,7 +277,6 @@ const actualizarPaciente = async (req, res) => {
       updates.usuario = usuario.trim();
     }
 
-    // Si se envían nombres/apellidos, recalcular nombre/nombre_key
     const n1 = primer_nombre   ?? p.primer_nombre;
     const n2 = segundo_nombre  ?? p.segundo_nombre;
     const a1 = primer_apellido ?? p.primer_apellido;
@@ -273,7 +306,7 @@ const actualizarPaciente = async (req, res) => {
   }
 };
 
-// DELETE /auth/:id — INACTIVO
+// DELETE /auth/:id (protegido)
 const eliminarPaciente = async (req, res) => {
   try {
     const { id } = req.params;
@@ -292,6 +325,7 @@ const eliminarPaciente = async (req, res) => {
 module.exports = {
   registrarPaciente,
   loginPaciente,
+  refresh,
   actualizarPaciente,
   eliminarPaciente,
   me,

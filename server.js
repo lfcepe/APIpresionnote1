@@ -2,11 +2,10 @@
 const express = require('express');
 require('dotenv').config();
 const cors = require('cors');
-const jwt = require('jsonwebtoken');
 
 const sequelize = require('./Models/config/databaseconfig');
 
-// Importa los modelos para que Sequelize los registre
+// Registrar modelos (y asociaciones dentro de cada modelo)
 const Catalogo = require('./Models/Catalogo');
 const Paciente = require('./Models/Paciente');
 const PresionArterial = require('./Models/PresionArterial');
@@ -15,6 +14,9 @@ const PresionArterial = require('./Models/PresionArterial');
 const authRoutes = require('./Routes/PacienteRoutes');
 const presionArterialRoutes = require('./Routes/PresionArterialRoutes');
 const catalogoRoutes = require('./Routes/CatalogoRoutes');
+
+// Middleware JWT centralizado
+const { verifyToken } = require('./Middleware/auth');
 
 const app = express();
 
@@ -26,25 +28,18 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '2mb' }));
 
-/* ------------------- Middleware: verificar JWT ------------------- */
-function verifyToken(req, res, next) {
-  try {
-    const header = req.headers['authorization'] || '';
-    const [scheme, token] = header.split(' ');
-    if (scheme !== 'Bearer' || !token) {
-      return res.status(401).json({ error: 'Token no provisto' });
-    }
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    // Guardamos el id del usuario para uso en controladores
-    req.userId = decoded.id;
-    next();
-  } catch (err) {
-    return res.status(401).json({ error: 'Token inválido o expirado' });
+// Manejo claro de JSON inválido (antes de las rutas)
+app.use((err, req, res, next) => {
+  if (err?.type === 'entity.parse.failed') {
+    return res.status(400).json({
+      error: 'JSON inválido. Verifica que el body sea JSON y Content-Type sea application/json.',
+    });
   }
-}
+  return next(err);
+});
 
 /* --------------------------- Rutas --------------------------- */
-// Público (registro/login)
+// Públicas
 app.use('/auth', authRoutes);
 
 // Protegidas por JWT
@@ -72,8 +67,7 @@ app.use((err, req, res, next) => {
     await sequelize.authenticate();
     console.log('Conexión a BD exitosa');
 
-    // Sincroniza en orden para respetar FKs:
-    // 1) catalogo, 2) paciente (FK a catalogo), 3) presionarterial (FK a catalogo y paciente)
+    // Sincroniza en orden para respetar FKs
     await Catalogo.sync();        // tableName: 'catalogo'
     await Paciente.sync();        // tableName: 'paciente'
     await PresionArterial.sync(); // tableName: 'presionarterial'

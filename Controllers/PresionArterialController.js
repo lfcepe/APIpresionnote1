@@ -3,6 +3,8 @@ const { Op } = require('sequelize');
 const PDFDocument = require('pdfkit');
 const PresionArterial = require('../Models/PresionArterial');
 const Catalogo = require('../Models/Catalogo');
+const Paciente = require('../Models/Paciente');
+
 
 /* ------------------------ Utilidades de fecha/hora ------------------------ */
 function toYMD(d) {
@@ -40,6 +42,17 @@ function endOfMonth(date) {
   const d = new Date(date.getFullYear(), date.getMonth() + 1, 0);
   d.setHours(23, 59, 59, 999);
   return d;
+}
+
+// Helpers para armar el nombre mostrado
+function nombrePacienteDisplay(p, fallbackId) {
+  if (!p) return `Paciente ID ${fallbackId}`;
+  const partes4 = [p.primer_nombre, p.segundo_nombre, p.primer_apellido, p.segundo_apellido]
+    .filter(Boolean).join(' ').trim();
+  if (partes4) return partes4;
+  const partes2 = [p.nombre, p.apellido].filter(Boolean).join(' ').trim();
+  if (partes2) return partes2;
+  return `Paciente ID ${fallbackId}`;
 }
 
 /* --------------------- Catálogo: obtener id por valor --------------------- */
@@ -178,6 +191,15 @@ const reporteMensualPDF = async (req, res) => {
     let { year, month } = req.query;
     if (!pacienteId) return res.status(400).json({ error: 'Envíe pacienteId.' });
 
+    // Buscar datos del paciente para el encabezado
+    const paciente = await Paciente.findByPk(pacienteId, {
+      attributes: [
+        'primer_nombre','segundo_nombre','primer_apellido','segundo_apellido',
+        'nombre','apellido','usuario'
+      ]
+    });
+    const nombreMostrar = nombrePacienteDisplay(paciente, pacienteId);
+
     const now = new Date();
     const y = Number(year || now.getFullYear());
     const m = Number(month || now.getMonth() + 1);
@@ -201,15 +223,18 @@ const reporteMensualPDF = async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     doc.pipe(res);
 
+    // Encabezado
     doc.fontSize(18).text('Informe Mensual - Presión Arterial', { align: 'center' });
     doc.moveDown(0.5);
-    doc.fontSize(12).text(`Paciente ID: ${pacienteId}`);
+    doc.fontSize(12).text(`Paciente: ${nombreMostrar} (ID: ${pacienteId})`);
+    if (paciente?.usuario) doc.text(`Usuario: ${paciente.usuario}`);
     doc.text(`Periodo: ${toYMD(ini)} a ${toYMD(fin)}`);
     doc.moveDown();
     doc.text('Fecha      Hora     Sistólica  Diastólica  Nivel');
     doc.moveTo(40, doc.y).lineTo(555, doc.y).stroke();
     doc.moveDown(0.3);
 
+    // Filas
     for (const t of tomas) {
       const nivel = t.Catalogo?.valor ?? clasificarPresion(Number(t.presionsistolica), Number(t.presiondiastolica));
       const fila =
@@ -223,10 +248,23 @@ const reporteMensualPDF = async (req, res) => {
     res.status(500).json({ error: 'Error al generar PDF', detalle: e.message });
   }
 };
+const eliminarToma = async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ error: 'Envíe el id de la toma.' });
 
+    const borradas = await PresionArterial.destroy({ where: { id } });
+    if (!borradas) return res.status(404).json({ error: 'Toma no encontrada' });
+
+    res.json({ mensaje: 'Toma eliminada', id });
+  } catch (e) {
+    res.status(500).json({ error: 'Error al eliminar toma', detalle: e.message });
+  }
+};
 module.exports = {
   crearToma,
   obtenerPorFecha,
   obtenerSemana,
   reporteMensualPDF,
+  eliminarToma,
 };
