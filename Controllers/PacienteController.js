@@ -217,19 +217,21 @@ const refresh = async (req, res) => {
     const { refreshToken } = req.body;
     if (!refreshToken) return res.status(400).json({ error: 'Falta refreshToken' });
 
-    // Opcional: en dev puedes loguear payload sin verificar:
-    // console.log('DEBUG decode:', jwt.decode(refreshToken, { complete: true }));
-
     const payload = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-    const tokens = issueTokens(payload.id); // rota ambos
+    const { id, rv } = payload; // rv = refresh_version embebida en el token
+
+    const p = await Paciente.findByPk(id, { attributes: ['id', 'refresh_version'] });
+    if (!p) return res.status(401).json({ error: 'Usuario no encontrado' });
+
+    // Comparar versión actual vs la del token
+    if (typeof rv !== 'number' || rv !== p.refresh_version) {
+      return res.status(401).json({ error: 'Refresh token inválido o revocado' });
+    }
+
+    // Emitir nuevo par (rotación simple, misma rv)
+    const tokens = await issueTokens(id);
     return res.json(tokens);
   } catch (e) {
-    if (e.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Refresh expirado', detalle: `exp=${e.expiredAt}` });
-    }
-    if (e.message?.includes('secret or public key must be provided')) {
-      return res.status(500).json({ error: 'Falta JWT_REFRESH_SECRET en servidor' });
-    }
     return res.status(401).json({ error: 'Refresh token inválido o expirado' });
   }
 };
@@ -322,10 +324,27 @@ const eliminarPaciente = async (req, res) => {
   }
 };
 
+// POST /auth/logout (protegido) — logout global: invalida todos los refresh
+const logout = async (req, res) => {
+  try {
+    // req.userId viene del access token (verifyToken)
+    const p = await Paciente.findByPk(req.userId);
+    if (!p) return res.status(404).json({ error: 'Paciente no encontrado' });
+
+    // Incrementa la versión: cualquier refresh anterior queda inválido
+    await p.update({ refresh_version: (p.refresh_version || 0) + 1 });
+
+    return res.json({ mensaje: 'Sesión cerrada. Refresh tokens revocados.' });
+  } catch (e) {
+    return res.status(500).json({ error: 'Error al cerrar sesión', detalle: e.message });
+  }
+};
+
 module.exports = {
   registrarPaciente,
   loginPaciente,
   refresh,
+  logout,
   actualizarPaciente,
   eliminarPaciente,
   me,

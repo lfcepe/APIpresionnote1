@@ -10,5 +10,6 @@ router.post('/refresh', presionarterial.refresh);
 router.get('/me', verifyToken, presionarterial.me);
 router.put('/:id', verifyToken, presionarterial.actualizarPaciente);
 router.delete('/:id', verifyToken, presionarterial.eliminarPaciente);
+router.post('/logout', verifyToken, presionarterial.logout);
 
 module.exports = router;
