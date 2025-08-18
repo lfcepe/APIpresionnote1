@@ -89,7 +89,7 @@ const registrarPaciente = async (req, res) => {
       }, { transaction: t });
 
       await t.commit();
-      const { accessToken, refreshToken } = issueTokens(existente.id);
+      const { accessToken, refreshToken } = await issueTokens(existente.id); // <= AWAIT
       return res.status(200).json({
         mensaje: 'Paciente actualizado y activado',
         accessToken, refreshToken,
@@ -124,7 +124,7 @@ const registrarPaciente = async (req, res) => {
       }, { transaction: t });
 
       await t.commit();
-      const { accessToken, refreshToken } = issueTokens(p.id);
+      const { accessToken, refreshToken } = await issueTokens(p.id); // <= AWAIT
       return res.status(200).json({
         mensaje: 'Cuenta reactivada',
         accessToken, refreshToken,
@@ -147,7 +147,7 @@ const registrarPaciente = async (req, res) => {
     }, { transaction: t });
 
     await t.commit();
-    const { accessToken, refreshToken } = issueTokens(nuevo.id);
+    const { accessToken, refreshToken } = await issueTokens(nuevo.id); // <= AWAIT
     return res.status(201).json({
       mensaje: 'Paciente registrado',
       accessToken, refreshToken,
@@ -193,8 +193,8 @@ const loginPaciente = async (req, res) => {
       });
     }
 
-    const { accessToken, refreshToken } = issueTokens(paciente.id);
-    res.json({
+    const { accessToken, refreshToken } = await issueTokens(paciente.id); // <= AWAIT
+    return res.json({
       mensaje: 'Login exitoso',
       accessToken, refreshToken,
       user: {
@@ -207,7 +207,7 @@ const loginPaciente = async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({ error: 'Error en el login', detalle: error.message });
+    return res.status(500).json({ error: 'Error en el login', detalle: error.message });
   }
 };
 
@@ -218,24 +218,21 @@ const refresh = async (req, res) => {
     if (!refreshToken) return res.status(400).json({ error: 'Falta refreshToken' });
 
     const payload = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-    const { id, rv } = payload; // rv = refresh_version embebida en el token
+    const { id, rv } = payload;
 
     const p = await Paciente.findByPk(id, { attributes: ['id', 'refresh_version'] });
     if (!p) return res.status(401).json({ error: 'Usuario no encontrado' });
 
-    // Comparar versión actual vs la del token
     if (typeof rv !== 'number' || rv !== p.refresh_version) {
       return res.status(401).json({ error: 'Refresh token inválido o revocado' });
     }
 
-    // Emitir nuevo par (rotación simple, misma rv)
-    const tokens = await issueTokens(id);
+    const tokens = await issueTokens(id); // <= AWAIT
     return res.json(tokens);
   } catch (e) {
     return res.status(401).json({ error: 'Refresh token inválido o expirado' });
   }
 };
-
 
 // GET /auth/me (protegido)
 const me = async (req, res) => {
@@ -248,9 +245,9 @@ const me = async (req, res) => {
       ]
     });
     if (!p) return res.status(404).json({ error: 'Paciente no encontrado' });
-    res.json({ user: p });
+    return res.json({ user: p });
   } catch (error) {
-    res.status(500).json({ error: 'Error al obtener perfil', detalle: error.message });
+    return res.status(500).json({ error: 'Error al obtener perfil', detalle: error.message });
   }
 };
 
@@ -302,9 +299,9 @@ const actualizarPaciente = async (req, res) => {
     }
 
     await p.update(updates);
-    res.json({ mensaje: 'Paciente actualizado correctamente', paciente: p });
+    return res.json({ mensaje: 'Paciente actualizado correctamente', paciente: p });
   } catch (error) {
-    res.status(500).json({ error: 'Error al actualizar paciente', detalle: error.message });
+    return res.status(500).json({ error: 'Error al actualizar paciente', detalle: error.message });
   }
 };
 
@@ -318,22 +315,19 @@ const eliminarPaciente = async (req, res) => {
     if (!p) return res.status(404).json({ error: 'Paciente no encontrado' });
 
     await p.update({ id_estado: idInactivo });
-    res.json({ mensaje: 'Paciente eliminado' });
+    return res.json({ mensaje: 'Paciente eliminado' });
   } catch (error) {
-    res.status(500).json({ error: 'Error al eliminar', detalle: error.message });
+    return res.status(500).json({ error: 'Error al eliminar', detalle: error.message });
   }
 };
 
-// POST /auth/logout (protegido) — logout global: invalida todos los refresh
+// POST /auth/logout (protegido)
 const logout = async (req, res) => {
   try {
-    // req.userId viene del access token (verifyToken)
     const p = await Paciente.findByPk(req.userId);
     if (!p) return res.status(404).json({ error: 'Paciente no encontrado' });
 
-    // Incrementa la versión: cualquier refresh anterior queda inválido
     await p.update({ refresh_version: (p.refresh_version || 0) + 1 });
-
     return res.json({ mensaje: 'Sesión cerrada. Refresh tokens revocados.' });
   } catch (e) {
     return res.status(500).json({ error: 'Error al cerrar sesión', detalle: e.message });
